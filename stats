@@ -1,0 +1,72 @@
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# Project: Bat Speed vs Batting Average
+# Pitch Speed vs ERA
+
+```{r}
+library(tidyverse)
+library(janitor)
+library(jsonlite)
+library(httr2)
+library(baseballr)
+```
+
+##
+
+
+```{r}
+# Read CSV from Downloads folder
+stats <- read_csv("C:/Users/derek/Downloads/stats.csv")
+
+```
+```{r}
+# Read CSV from Downloads folder
+stats <- read_csv("C:/Users/derek/Downloads/stats.csv")
+
+```
+
+```{r}
+# Clean batting average into numeric
+stats <- stats %>%
+  mutate(
+    batting_avg = as.numeric(batting_avg),
+    avg_swing_speed = as.numeric(avg_swing_speed)
+  )
+
+# Top 50 batters by bat speed
+top_50_bat_speed <- stats %>%
+  filter(!is.na(avg_swing_speed)) %>%
+  arrange(desc(avg_swing_speed)) %>%
+  select(
+    `last_name, first_name`,
+    player_id,
+    year,
+    ab,
+    hit,
+    home_run,
+    batting_avg,
+    avg_swing_speed
+  ) %>%
+  slice_head(n = 50)
+
+# Top 50 batters by batting average
+top_50_batting_avg <- stats %>%
+  filter(!is.na(batting_avg)) %>%
+  arrange(desc(batting_avg)) %>%
+  select(
+    `last_name, first_name`,
+    player_id,
+    year,
+    ab,
+    hit,
+    home_run,
+    batting_avg,
+    avg_swing_speed
+  ) %>%
+  slice_head(n = 50)
+# Print results
+print(top_50_bat_speed)
+print(top_50_batting_avg)
+```
