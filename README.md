@@ -1,2 +1,2 @@
 # ISA501FinalProject
-Finding how the top 50 batting averages of the past season compared to their bat speed and other stats
+Comparing the 2024 and 2025 LA Dodgers to the MLB to show how their offense led them to championships and how the addition of Kyle Tucker will lead them to another potentially  
