@@ -1,0 +1,1094 @@
+---
+title: "501proj"
+author: "Derek Fay"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Project:LA Dodgers 2024 and 2025 Batting
+# Addition of Kyle Tucker and other stats
+
+```{r}
+library(tidyverse)
+library(janitor)
+library(jsonlite)
+library(httr2)
+library(baseballr)
+```
+
+```{r}
+# Read CSV from Downloads folder
+stats <- read_csv("C:/Users/derek/Downloads/stats.csv")
+
+```
+
+```{r}
+library(tidyverse)
+
+############################################################
+# 1. Dodgers lineups you want to compare
+############################################################
+
+dodgers_lineup_2024 <- tribble(
+  ~lineup_order, ~player_id, ~player_name,          ~position,
+  1,             660271,     "Shohei Ohtani",       "DH/OF",
+  2,             605141,     "Mookie Betts",        "OF/INF",
+  3,             518692,     "Freddie Freeman",     "1B",
+  4,             669257,     "Will Smith",          "C",
+  5,             606192,     "Teoscar Hernández",   "OF",
+  6,             571970,     "Max Muncy",           "INF",
+  7,             571771,     "Kiké Hernández",      "UTIL",
+  8,             669242,     "Tommy Edman",         "INF",
+  9,             681624,     "Andy Pages",          "OF"
+)
+
+dodgers_lineup_2025 <- tribble(
+  ~lineup_order, ~player_id, ~player_name,          ~position,
+  1,             660271,     "Shohei Ohtani",       "DH/P",
+  2,             605141,     "Mookie Betts",        "SS",
+  3,             518692,     "Freddie Freeman",     "1B",
+  4,             669257,     "Will Smith",          "C",
+  5,             606192,     "Teoscar Hernández",   "RF",
+  6,             571970,     "Max Muncy",           "3B",
+  7,             571771,     "Kiké Hernández",      "LF/UTIL",
+  8,             669242,     "Tommy Edman",         "2B",
+  9,             681624,     "Andy Pages",          "CF"
+)
+
+############################################################
+# 2. Function to pull Baseball Savant custom leaderboard
+############################################################
+
+pull_savant_batter_stats <- function(year, min_pa = "0") {
+  
+  savant_url <- paste0(
+    "https://baseballsavant.mlb.com/leaderboard/custom?",
+    "year=", year,
+    "&type=batter",
+    "&filter=",
+    "&min=", min_pa,
+    "&selections=pa%2Chit%2Cbatting_avg%2Cslg_percent%2Con_base_percent%2Con_base_plus_slg%2Cavg_swing_speed%2Csweet_spot_percent%2Cbarrel_batted_rate%2Chard_hit_percent%2Cavg_best_speed%2Cavg_hyper_speed%2Cwhiff_percent%2Cswing_percent",
+    "&chart=true",
+    "&x=pa",
+    "&y=pa",
+    "&r=no",
+    "&chartType=beeswarm",
+    "&sort=xwoba",
+    "&sortDir=desc",
+    "&csv=true"
+  )
+  
+  read_csv(savant_url, show_col_types = FALSE) %>%
+    mutate(
+      player_id = as.integer(player_id),
+      pa = as.numeric(pa),
+      hit = as.numeric(hit),
+      batting_avg = as.numeric(batting_avg),
+      slg_percent = as.numeric(slg_percent),
+      on_base_percent = as.numeric(on_base_percent),
+      on_base_plus_slg = as.numeric(on_base_plus_slg),
+      avg_swing_speed = as.numeric(avg_swing_speed),
+      sweet_spot_percent = as.numeric(sweet_spot_percent),
+      barrel_batted_rate = as.numeric(barrel_batted_rate),
+      hard_hit_percent = as.numeric(hard_hit_percent),
+      avg_best_speed = as.numeric(avg_best_speed),
+      avg_hyper_speed = as.numeric(avg_hyper_speed),
+      whiff_percent = as.numeric(whiff_percent),
+      swing_percent = as.numeric(swing_percent)
+    )
+}
+
+############################################################
+# 3. Function to make one season file
+############################################################
+
+make_dodgers_lineup_file <- function(year, lineup_table, output_name) {
+  
+  # Pull all players so every Dodgers lineup player can be found
+  savant_all <- pull_savant_batter_stats(year, min_pa = "0")
+  
+  # Pull qualified players to calculate MLB average
+  savant_qualified <- pull_savant_batter_stats(year, min_pa = "q")
+  
+  metric_cols <- c(
+    "pa",
+    "hit",
+    "batting_avg",
+    "slg_percent",
+    "on_base_percent",
+    "on_base_plus_slg",
+    "avg_swing_speed",
+    "sweet_spot_percent",
+    "barrel_batted_rate",
+    "hard_hit_percent",
+    "avg_best_speed",
+    "avg_hyper_speed",
+    "whiff_percent",
+    "swing_percent"
+  )
+  
+  player_stats <- savant_all %>%
+    select(
+      player_id,
+      savant_name = `last_name, first_name`,
+      all_of(metric_cols)
+    )
+  
+  dodgers_stats <- lineup_table %>%
+    mutate(
+      season = year,
+      group = "Dodgers Lineup"
+    ) %>%
+    left_join(player_stats, by = "player_id") %>%
+    select(
+      season,
+      lineup_order,
+      player_id,
+      player_name,
+      position,
+      group,
+      all_of(metric_cols)
+    )
+  
+  mlb_average <- savant_qualified %>%
+    summarize(
+      across(
+        all_of(metric_cols),
+        ~ mean(.x, na.rm = TRUE)
+      )
+    ) %>%
+    mutate(
+      season = year,
+      lineup_order = 99,
+      player_id = NA_integer_,
+      player_name = "MLB Qualified Hitter Average",
+      position = "MLB Average",
+      group = "MLB Average"
+    ) %>%
+    select(
+      season,
+      lineup_order,
+      player_id,
+      player_name,
+      position,
+      group,
+      all_of(metric_cols)
+    )
+  
+  wide_file <- bind_rows(
+    dodgers_stats,
+    mlb_average
+  ) %>%
+    arrange(lineup_order) %>%
+    mutate(
+      player_label = if_else(
+        group == "Dodgers Lineup",
+        paste0(lineup_order, ". ", player_name),
+        player_name
+      ),
+      avg_label = sprintf("%.3f", batting_avg),
+      obp_label = sprintf("%.3f", on_base_percent),
+      slg_label = sprintf("%.3f", slg_percent),
+      ops_label = sprintf("%.3f", on_base_plus_slg),
+      bat_speed_label = paste0(round(avg_swing_speed, 1), " mph")
+    )
+  
+  long_file <- wide_file %>%
+    select(
+      season,
+      lineup_order,
+      player_name,
+      player_label,
+      position,
+      group,
+      all_of(metric_cols)
+    ) %>%
+    pivot_longer(
+      cols = all_of(metric_cols),
+      names_to = "metric",
+      values_to = "value"
+    ) %>%
+    mutate(
+      metric = case_when(
+        metric == "pa" ~ "Plate Appearances",
+        metric == "hit" ~ "Hits",
+        metric == "batting_avg" ~ "Batting Average",
+        metric == "slg_percent" ~ "Slugging Percentage",
+        metric == "on_base_percent" ~ "On-Base Percentage",
+        metric == "on_base_plus_slg" ~ "OPS",
+        metric == "avg_swing_speed" ~ "Bat Speed",
+        metric == "sweet_spot_percent" ~ "Sweet Spot %",
+        metric == "barrel_batted_rate" ~ "Barrel %",
+        metric == "hard_hit_percent" ~ "Hard-Hit %",
+        metric == "avg_best_speed" ~ "Best Speed",
+        metric == "avg_hyper_speed" ~ "Hyper Speed",
+        metric == "whiff_percent" ~ "Whiff %",
+        metric == "swing_percent" ~ "Swing %",
+        TRUE ~ metric
+      ),
+      value_label = case_when(
+        metric %in% c("Batting Average", "Slugging Percentage", "On-Base Percentage", "OPS") ~ sprintf("%.3f", value),
+        metric %in% c("Bat Speed", "Best Speed", "Hyper Speed") ~ paste0(round(value, 1), " mph"),
+        metric %in% c("Sweet Spot %", "Barrel %", "Hard-Hit %", "Whiff %", "Swing %") ~ paste0(round(value, 1), "%"),
+        TRUE ~ as.character(round(value, 0))
+      )
+    )
+  
+  validation_file <- wide_file %>%
+    filter(group == "Dodgers Lineup") %>%
+    mutate(
+      missing_stats = is.na(pa),
+      problem = if_else(
+        missing_stats,
+        "Player did not match Baseball Savant data",
+        "No issue"
+      )
+    ) %>%
+    select(
+      season,
+      player_name,
+      position,
+      missing_stats,
+      problem
+    )
+  
+  print(wide_file, n = 20)
+  print(long_file, n = 200)
+  print(validation_file, n = 20)
+  
+  write_csv(
+    wide_file,
+    paste0("C:/Users/derek/Downloads/", output_name, "_wide.csv")
+  )
+  
+  write_csv(
+    long_file,
+    paste0("C:/Users/derek/Downloads/", output_name, "_long.csv")
+  )
+  
+  write_csv(
+    validation_file,
+    paste0("C:/Users/derek/Downloads/", output_name, "_validation.csv")
+  )
+}
+
+############################################################
+# 4. Run 2024 and 2025 separately
+############################################################
+
+make_dodgers_lineup_file(
+  year = 2024,
+  lineup_table = dodgers_lineup_2024,
+  output_name = "dodgers_2024_lineup_vs_mlb_average"
+)
+
+make_dodgers_lineup_file(
+  year = 2025,
+  lineup_table = dodgers_lineup_2025,
+  output_name = "dodgers_2025_lineup_vs_mlb_average"
+)
+```
+```{r}
+
+library(tidyverse)
+
+############################################################
+# 1. Function to pull Baseball Savant data
+############################################################
+
+pull_savant_batter_stats <- function(year, min_pa = "q") {
+  
+  savant_url <- paste0(
+    "https://baseballsavant.mlb.com/leaderboard/custom?",
+    "year=", year,
+    "&type=batter",
+    "&filter=",
+    "&min=", min_pa,
+    "&selections=pa%2Chit%2Cbatting_avg%2Cslg_percent%2Con_base_percent%2Con_base_plus_slg%2Cavg_swing_speed%2Csweet_spot_percent%2Cbarrel_batted_rate%2Chard_hit_percent%2Cavg_best_speed%2Cavg_hyper_speed%2Cwhiff_percent%2Cswing_percent",
+    "&chart=true",
+    "&x=pa",
+    "&y=pa",
+    "&r=no",
+    "&chartType=beeswarm",
+    "&sort=xwoba",
+    "&sortDir=desc",
+    "&csv=true"
+  )
+  
+  read_csv(savant_url, show_col_types = FALSE) %>%
+    mutate(
+      season = year,
+      pa = as.numeric(pa),
+      hit = as.numeric(hit),
+      batting_avg = as.numeric(batting_avg),
+      slg_percent = as.numeric(slg_percent),
+      on_base_percent = as.numeric(on_base_percent),
+      on_base_plus_slg = as.numeric(on_base_plus_slg),
+      avg_swing_speed = as.numeric(avg_swing_speed),
+      sweet_spot_percent = as.numeric(sweet_spot_percent),
+      barrel_batted_rate = as.numeric(barrel_batted_rate),
+      hard_hit_percent = as.numeric(hard_hit_percent),
+      avg_best_speed = as.numeric(avg_best_speed),
+      avg_hyper_speed = as.numeric(avg_hyper_speed),
+      whiff_percent = as.numeric(whiff_percent),
+      swing_percent = as.numeric(swing_percent)
+    )
+}
+
+############################################################
+# 2. Pull 2024 and 2025 qualified hitters
+############################################################
+
+mlb_2024 <- pull_savant_batter_stats(2024, min_pa = "q")
+mlb_2025 <- pull_savant_batter_stats(2025, min_pa = "q")
+
+mlb_both_years <- bind_rows(mlb_2024, mlb_2025)
+
+############################################################
+# 3. Create MLB average table
+############################################################
+
+mlb_average_2024_2025 <- mlb_both_years %>%
+  group_by(season) %>%
+  summarize(
+    player_name = "MLB Qualified Hitter Average",
+    pa = mean(pa, na.rm = TRUE),
+    hit = mean(hit, na.rm = TRUE),
+    batting_avg = mean(batting_avg, na.rm = TRUE),
+    slg_percent = mean(slg_percent, na.rm = TRUE),
+    on_base_percent = mean(on_base_percent, na.rm = TRUE),
+    on_base_plus_slg = mean(on_base_plus_slg, na.rm = TRUE),
+    avg_swing_speed = mean(avg_swing_speed, na.rm = TRUE),
+    sweet_spot_percent = mean(sweet_spot_percent, na.rm = TRUE),
+    barrel_batted_rate = mean(barrel_batted_rate, na.rm = TRUE),
+    hard_hit_percent = mean(hard_hit_percent, na.rm = TRUE),
+    avg_best_speed = mean(avg_best_speed, na.rm = TRUE),
+    avg_hyper_speed = mean(avg_hyper_speed, na.rm = TRUE),
+    whiff_percent = mean(whiff_percent, na.rm = TRUE),
+    swing_percent = mean(swing_percent, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    avg_label = sprintf("%.3f", batting_avg),
+    obp_label = sprintf("%.3f", on_base_percent),
+    slg_label = sprintf("%.3f", slg_percent),
+    ops_label = sprintf("%.3f", on_base_plus_slg),
+    bat_speed_label = paste0(round(avg_swing_speed, 1), " mph")
+  )
+
+############################################################
+# 4. Long version for Tableau graphs
+############################################################
+
+mlb_average_2024_2025_long <- mlb_average_2024_2025 %>%
+  select(
+    season,
+    player_name,
+    pa,
+    hit,
+    batting_avg,
+    slg_percent,
+    on_base_percent,
+    on_base_plus_slg,
+    avg_swing_speed,
+    sweet_spot_percent,
+    barrel_batted_rate,
+    hard_hit_percent,
+    avg_best_speed,
+    avg_hyper_speed,
+    whiff_percent,
+    swing_percent
+  ) %>%
+  pivot_longer(
+    cols = c(
+      pa,
+      hit,
+      batting_avg,
+      slg_percent,
+      on_base_percent,
+      on_base_plus_slg,
+      avg_swing_speed,
+      sweet_spot_percent,
+      barrel_batted_rate,
+      hard_hit_percent,
+      avg_best_speed,
+      avg_hyper_speed,
+      whiff_percent,
+      swing_percent
+    ),
+    names_to = "metric",
+    values_to = "value"
+  ) %>%
+  mutate(
+    metric = case_when(
+      metric == "pa" ~ "Plate Appearances",
+      metric == "hit" ~ "Hits",
+      metric == "batting_avg" ~ "Batting Average",
+      metric == "slg_percent" ~ "Slugging Percentage",
+      metric == "on_base_percent" ~ "On-Base Percentage",
+      metric == "on_base_plus_slg" ~ "OPS",
+      metric == "avg_swing_speed" ~ "Bat Speed",
+      metric == "sweet_spot_percent" ~ "Sweet Spot %",
+      metric == "barrel_batted_rate" ~ "Barrel %",
+      metric == "hard_hit_percent" ~ "Hard-Hit %",
+      metric == "avg_best_speed" ~ "Best Speed",
+      metric == "avg_hyper_speed" ~ "Hyper Speed",
+      metric == "whiff_percent" ~ "Whiff %",
+      metric == "swing_percent" ~ "Swing %",
+      TRUE ~ metric
+    ),
+    value_label = case_when(
+      metric %in% c("Batting Average", "Slugging Percentage", "On-Base Percentage", "OPS") ~ sprintf("%.3f", value),
+      metric %in% c("Bat Speed", "Best Speed", "Hyper Speed") ~ paste0(round(value, 1), " mph"),
+      metric %in% c("Sweet Spot %", "Barrel %", "Hard-Hit %", "Whiff %", "Swing %") ~ paste0(round(value, 1), "%"),
+      TRUE ~ as.character(round(value, 0))
+    )
+  )
+
+############################################################
+# 5. Print and save
+############################################################
+
+print(mlb_average_2024_2025, n = 2)
+print(mlb_average_2024_2025_long, n = 100)
+
+write_csv(
+  mlb_average_2024_2025,
+  "C:/Users/derek/Downloads/mlb_average_2024_2025_wide.csv"
+)
+
+write_csv(
+  mlb_average_2024_2025_long,
+  "C:/Users/derek/Downloads/mlb_average_2024_2025_long.csv"
+)
+
+```
+
+
+```{r}
+library(tidyverse)
+
+############################################################
+# Kyle Tucker Career vs MLB Average
+############################################################
+
+# Kyle Tucker MLBAM player ID
+kyle_tucker_id <- 663656
+
+# Use the seasons you want
+seasons <- 2018:2026
+
+############################################################
+# Function to pull Baseball Savant custom leaderboard
+############################################################
+
+pull_savant_batter_stats <- function(year, min_pa = "0") {
+  
+  savant_url <- paste0(
+    "https://baseballsavant.mlb.com/leaderboard/custom?",
+    "year=", year,
+    "&type=batter",
+    "&filter=",
+    "&min=", min_pa,
+    "&selections=pa%2Cab%2Chit%2Chome_run%2Crbi%2Cbatting_avg%2Cslg_percent%2Con_base_percent%2Con_base_plus_slg%2Cavg_swing_speed",
+    "&chart=true",
+    "&x=pa",
+    "&y=pa",
+    "&r=no",
+    "&chartType=beeswarm",
+    "&sort=xwoba",
+    "&sortDir=desc",
+    "&csv=true"
+  )
+  
+  read_csv(savant_url, show_col_types = FALSE) %>%
+    mutate(
+      season = year,
+      player_id = as.integer(player_id),
+      pa = as.numeric(pa),
+      ab = as.numeric(ab),
+      hit = as.numeric(hit),
+      home_run = as.numeric(home_run),
+      rbi = as.numeric(rbi),
+      batting_avg = as.numeric(batting_avg),
+      slg_percent = as.numeric(slg_percent),
+      on_base_percent = as.numeric(on_base_percent),
+      on_base_plus_slg = as.numeric(on_base_plus_slg),
+      avg_swing_speed = as.numeric(avg_swing_speed)
+    )
+}
+
+############################################################
+# Pull all seasons
+############################################################
+
+all_batters <- map_dfr(seasons, ~ pull_savant_batter_stats(.x, min_pa = "0"))
+
+qualified_batters <- map_dfr(seasons, ~ pull_savant_batter_stats(.x, min_pa = "q"))
+
+############################################################
+# Kyle Tucker stats
+############################################################
+
+tucker_stats <- all_batters %>%
+  filter(player_id == kyle_tucker_id) %>%
+  transmute(
+    season,
+    group = "Kyle Tucker",
+    player_name = "Kyle Tucker",
+    pa,
+    ab,
+    hit,
+    home_run,
+    rbi,
+    batting_avg,
+    on_base_percent,
+    slg_percent,
+    on_base_plus_slg,
+    avg_swing_speed
+  )
+
+############################################################
+# MLB average stats by season
+############################################################
+
+mlb_average <- qualified_batters %>%
+  group_by(season) %>%
+  summarize(
+    group = "MLB Average",
+    player_name = "MLB Average",
+    pa = mean(pa, na.rm = TRUE),
+    ab = mean(ab, na.rm = TRUE),
+    hit = mean(hit, na.rm = TRUE),
+    home_run = mean(home_run, na.rm = TRUE),
+    rbi = mean(rbi, na.rm = TRUE),
+    batting_avg = mean(batting_avg, na.rm = TRUE),
+    on_base_percent = mean(on_base_percent, na.rm = TRUE),
+    slg_percent = mean(slg_percent, na.rm = TRUE),
+    on_base_plus_slg = mean(on_base_plus_slg, na.rm = TRUE),
+    avg_swing_speed = mean(avg_swing_speed, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+
+# Combine Tucker and MLB average
+
+
+tucker_vs_mlb_wide <- bind_rows(
+  tucker_stats,
+  mlb_average
+) %>%
+  arrange(season, group)
+
+
+# Make long version for Tableau line chart
+
+
+tucker_vs_mlb_long <- tucker_vs_mlb_wide %>%
+  pivot_longer(
+    cols = c(
+      pa,
+      ab,
+      hit,
+      home_run,
+      rbi,
+      batting_avg,
+      on_base_percent,
+      slg_percent,
+      on_base_plus_slg,
+      avg_swing_speed
+    ),
+    names_to = "metric",
+    values_to = "value"
+  ) %>%
+  mutate(
+    metric = case_when(
+      metric == "pa" ~ "Plate Appearances",
+      metric == "ab" ~ "At Bats",
+      metric == "hit" ~ "Hits",
+      metric == "home_run" ~ "Home Runs",
+      metric == "rbi" ~ "RBI",
+      metric == "batting_avg" ~ "Batting Average",
+      metric == "on_base_percent" ~ "On-Base Percentage",
+      metric == "slg_percent" ~ "Slugging Percentage",
+      metric == "on_base_plus_slg" ~ "OPS",
+      metric == "avg_swing_speed" ~ "Bat Speed",
+      TRUE ~ metric
+    ),
+    value_label = case_when(
+      metric %in% c(
+        "Batting Average",
+        "On-Base Percentage",
+        "Slugging Percentage",
+        "OPS"
+      ) ~ sprintf("%.3f", value),
+      metric == "Bat Speed" ~ paste0(round(value, 1), " mph"),
+      TRUE ~ as.character(round(value, 0))
+    )
+  )
+
+############################################################
+# Print and save
+############################################################
+
+print(tucker_vs_mlb_wide, n = 30)
+print(tucker_vs_mlb_long, n = 200)
+
+write_csv(
+  tucker_vs_mlb_wide,
+  "C:/Users/derek/Downloads/kyle_tucker_vs_mlb_average_wide.csv"
+)
+
+write_csv(
+  tucker_vs_mlb_long,
+  "C:/Users/derek/Downloads/kyle_tucker_vs_mlb_average_long.csv"
+)
+```
+
+```{r}
+library(tidyverse)
+
+############################################################
+# MLB Average for Kyle Tucker Career Seasons
+############################################################
+
+seasons <- 2018:2026
+
+pull_savant_batter_stats <- function(year, min_pa = "q") {
+  
+  savant_url <- paste0(
+    "https://baseballsavant.mlb.com/leaderboard/custom?",
+    "year=", year,
+    "&type=batter",
+    "&filter=",
+    "&min=", min_pa,
+    "&selections=pa%2Cab%2Chit%2Chome_run%2Crbi%2Cbatting_avg%2Cslg_percent%2Con_base_percent%2Con_base_plus_slg%2Cavg_swing_speed",
+    "&chart=true",
+    "&x=pa",
+    "&y=pa",
+    "&r=no",
+    "&chartType=beeswarm",
+    "&sort=xwoba",
+    "&sortDir=desc",
+    "&csv=true"
+  )
+  
+  read_csv(savant_url, show_col_types = FALSE) %>%
+    mutate(
+      season = year,
+      pa = as.numeric(pa),
+      ab = as.numeric(ab),
+      hit = as.numeric(hit),
+      home_run = as.numeric(home_run),
+      rbi = as.numeric(rbi),
+      batting_avg = as.numeric(batting_avg),
+      on_base_percent = as.numeric(on_base_percent),
+      slg_percent = as.numeric(slg_percent),
+      on_base_plus_slg = as.numeric(on_base_plus_slg),
+      avg_swing_speed = as.numeric(avg_swing_speed)
+    )
+}
+
+############################################################
+# Pull MLB qualified hitters for each season
+############################################################
+
+mlb_all_years <- map_dfr(
+  seasons,
+  ~ pull_savant_batter_stats(.x, min_pa = "q")
+)
+
+############################################################
+# MLB average by season
+############################################################
+
+mlb_average_by_year <- mlb_all_years %>%
+  group_by(season) %>%
+  summarize(
+    group = "MLB Average",
+    player_name = "MLB Average",
+    batting_avg = mean(batting_avg, na.rm = TRUE),
+    on_base_percent = mean(on_base_percent, na.rm = TRUE),
+    slg_percent = mean(slg_percent, na.rm = TRUE),
+    on_base_plus_slg = mean(on_base_plus_slg, na.rm = TRUE),
+    home_run = mean(home_run, na.rm = TRUE),
+    rbi = mean(rbi, na.rm = TRUE),
+    hit = mean(hit, na.rm = TRUE),
+    avg_swing_speed = mean(avg_swing_speed, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+############################################################
+# Long version for Tableau
+############################################################
+
+mlb_average_by_year_long <- mlb_average_by_year %>%
+  pivot_longer(
+    cols = c(
+      batting_avg,
+      on_base_percent,
+      slg_percent,
+      on_base_plus_slg,
+      home_run,
+      rbi,
+      hit,
+      avg_swing_speed
+    ),
+    names_to = "metric",
+    values_to = "value"
+  ) %>%
+  mutate(
+    metric = case_when(
+      metric == "batting_avg" ~ "Batting Average",
+      metric == "on_base_percent" ~ "On-Base Percentage",
+      metric == "slg_percent" ~ "Slugging Percentage",
+      metric == "on_base_plus_slg" ~ "OPS",
+      metric == "home_run" ~ "Home Runs",
+      metric == "rbi" ~ "RBI",
+      metric == "hit" ~ "Hits",
+      metric == "avg_swing_speed" ~ "Bat Speed"
+    ),
+    value_label = case_when(
+      metric %in% c(
+        "Batting Average",
+        "On-Base Percentage",
+        "Slugging Percentage",
+        "OPS"
+      ) ~ sprintf("%.3f", value),
+      metric == "Bat Speed" ~ paste0(round(value, 1), " mph"),
+      TRUE ~ as.character(round(value, 0))
+    )
+  )
+
+############################################################
+# Print and save
+############################################################
+
+print(mlb_average_by_year, n = 20)
+print(mlb_average_by_year_long, n = 100)
+
+write_csv(
+  mlb_average_by_year,
+  "C:/Users/derek/Downloads/mlb_average_2018_2026_wide.csv"
+)
+
+write_csv(
+  mlb_average_by_year_long,
+  "C:/Users/derek/Downloads/mlb_average_2018_2026_long.csv"
+)
+```
+
+```{r}
+library(tidyverse)
+
+############################################################
+# 1. Settings
+############################################################
+
+season <- 2025
+n_top <- 25
+
+############################################################
+# 2. Web scrape Baseball Savant custom leaderboard
+############################################################
+
+savant_url <- paste0(
+  "https://baseballsavant.mlb.com/leaderboard/custom?",
+  "year=", season,
+  "&type=batter",
+  "&filter=",
+  "&min=q",
+  "&selections=pa%2Chit%2Cbatting_avg%2Cslg_percent%2Con_base_percent%2Con_base_plus_slg%2Cavg_swing_speed%2Csweet_spot_percent%2Cbarrel_batted_rate%2Chard_hit_percent%2Cavg_best_speed%2Cavg_hyper_speed%2Cwhiff_percent%2Cswing_percent",
+  "&chart=true",
+  "&x=pa",
+  "&y=pa",
+  "&r=no",
+  "&chartType=beeswarm",
+  "&sort=xwoba",
+  "&sortDir=desc",
+  "&csv=true"
+)
+
+stats_2025 <- read_csv(savant_url, show_col_types = FALSE)
+
+############################################################
+# 3. Clean columns
+############################################################
+
+stats_2025 <- stats_2025 %>%
+  mutate(
+    player_id = as.integer(player_id),
+    player_name = `last_name, first_name`,
+    pa = as.numeric(pa),
+    hit = as.numeric(hit),
+    batting_avg = as.numeric(batting_avg),
+    on_base_plus_slg = as.numeric(on_base_plus_slg),
+    avg_swing_speed = as.numeric(avg_swing_speed)
+  )
+
+############################################################
+# 4. Top 25 by bat speed
+############################################################
+
+top_25_bat_speed <- stats_2025 %>%
+  filter(!is.na(avg_swing_speed)) %>%
+  arrange(desc(avg_swing_speed)) %>%
+  slice_head(n = n_top) %>%
+  mutate(
+    stat_group = "Bat Speed",
+    stat_value = avg_swing_speed,
+    value_label = paste0(round(avg_swing_speed, 1), " mph"),
+    name_with_value = paste0(player_name, " - ", value_label)
+  ) %>%
+  select(
+    name_with_value,
+    player_name,
+    player_id,
+    stat_group,
+    stat_value,
+    value_label,
+    pa,
+    hit,
+    batting_avg,
+    on_base_plus_slg,
+    avg_swing_speed
+  )
+
+############################################################
+# 5. Top 25 by hits
+############################################################
+
+top_25_hits <- stats_2025 %>%
+  filter(!is.na(hit)) %>%
+  arrange(desc(hit)) %>%
+  slice_head(n = n_top) %>%
+  mutate(
+    stat_group = "Hits",
+    stat_value = hit,
+    value_label = as.character(round(hit, 0)),
+    name_with_value = paste0(player_name, " - ", value_label, " hits")
+  ) %>%
+  select(
+    name_with_value,
+    player_name,
+    player_id,
+    stat_group,
+    stat_value,
+    value_label,
+    pa,
+    hit,
+    batting_avg,
+    on_base_plus_slg,
+    avg_swing_speed
+  )
+
+############################################################
+# 6. Top 25 by batting average
+############################################################
+
+top_25_avg <- stats_2025 %>%
+  filter(!is.na(batting_avg)) %>%
+  arrange(desc(batting_avg)) %>%
+  slice_head(n = n_top) %>%
+  mutate(
+    stat_group = "Batting Average",
+    stat_value = batting_avg,
+    value_label = sprintf("%.3f", batting_avg),
+    name_with_value = paste0(player_name, " - ", value_label)
+  ) %>%
+  select(
+    name_with_value,
+    player_name,
+    player_id,
+    stat_group,
+    stat_value,
+    value_label,
+    pa,
+    hit,
+    batting_avg,
+    on_base_plus_slg,
+    avg_swing_speed
+  )
+
+############################################################
+# 7. Top 25 by OPS
+############################################################
+
+top_25_ops <- stats_2025 %>%
+  filter(!is.na(on_base_plus_slg)) %>%
+  arrange(desc(on_base_plus_slg)) %>%
+  slice_head(n = n_top) %>%
+  mutate(
+    stat_group = "OPS",
+    stat_value = on_base_plus_slg,
+    value_label = sprintf("%.3f", on_base_plus_slg),
+    name_with_value = paste0(player_name, " - ", value_label)
+  ) %>%
+  select(
+    name_with_value,
+    player_name,
+    player_id,
+    stat_group,
+    stat_value,
+    value_label,
+    pa,
+    hit,
+    batting_avg,
+    on_base_plus_slg,
+    avg_swing_speed
+  )
+
+############################################################
+# 8. Combine top 25 lists for Tableau
+############################################################
+
+top_25_all_stats_long <- bind_rows(
+  top_25_bat_speed,
+  top_25_hits,
+  top_25_avg,
+  top_25_ops
+)
+
+############################################################
+# 9. Find players who are in all 4 top-25 lists
+############################################################
+
+players_in_all_4 <- top_25_all_stats_long %>%
+  group_by(player_id, player_name) %>%
+  summarize(
+    number_of_lists_made = n_distinct(stat_group),
+    lists_made = paste(sort(unique(stat_group)), collapse = ", "),
+    .groups = "drop"
+  ) %>%
+  filter(number_of_lists_made == 4) %>%
+  left_join(
+    stats_2025 %>%
+      select(
+        player_id,
+        pa,
+        hit,
+        batting_avg,
+        on_base_plus_slg,
+        avg_swing_speed
+      ),
+    by = "player_id"
+  ) %>%
+  mutate(
+    name_with_values = paste0(
+      player_name,
+      " | Bat Speed: ",
+      round(avg_swing_speed, 1),
+      " mph | Hits: ",
+      round(hit, 0),
+      " | AVG: ",
+      sprintf("%.3f", batting_avg),
+      " | OPS: ",
+      sprintf("%.3f", on_base_plus_slg)
+    )
+  ) %>%
+  arrange(desc(on_base_plus_slg)) %>%
+  select(
+    name_with_values,
+    player_name,
+    number_of_lists_made,
+    lists_made,
+    avg_swing_speed,
+    hit,
+    batting_avg,
+    on_base_plus_slg,
+    pa
+  )
+
+############################################################
+# 10. Long version of players in all 4 for Tableau graphs
+############################################################
+
+players_in_all_4_long <- players_in_all_4 %>%
+  select(
+    player_name,
+    avg_swing_speed,
+    hit,
+    batting_avg,
+    on_base_plus_slg
+  ) %>%
+  pivot_longer(
+    cols = c(
+      avg_swing_speed,
+      hit,
+      batting_avg,
+      on_base_plus_slg
+    ),
+    names_to = "metric",
+    values_to = "value"
+  ) %>%
+  mutate(
+    metric = case_when(
+      metric == "avg_swing_speed" ~ "Bat Speed",
+      metric == "hit" ~ "Hits",
+      metric == "batting_avg" ~ "Batting Average",
+      metric == "on_base_plus_slg" ~ "OPS"
+    ),
+    value_label = case_when(
+      metric == "Bat Speed" ~ paste0(round(value, 1), " mph"),
+      metric == "Hits" ~ as.character(round(value, 0)),
+      metric %in% c("Batting Average", "OPS") ~ sprintf("%.3f", value)
+    )
+  )
+
+############################################################
+# 11. Print results
+############################################################
+
+print(top_25_bat_speed, n = 25)
+print(top_25_hits, n = 25)
+print(top_25_avg, n = 25)
+print(top_25_ops, n = 25)
+
+print(players_in_all_4, n = 25)
+print(players_in_all_4_long, n = 100)
+
+############################################################
+# 12. Save CSV files to Downloads
+############################################################
+
+write_csv(
+  top_25_bat_speed,
+  "C:/Users/derek/Downloads/top_25_bat_speed_2025.csv"
+)
+
+write_csv(
+  top_25_hits,
+  "C:/Users/derek/Downloads/top_25_hits_2025.csv"
+)
+
+write_csv(
+  top_25_avg,
+  "C:/Users/derek/Downloads/top_25_avg_2025.csv"
+)
+
+write_csv(
+  top_25_ops,
+  "C:/Users/derek/Downloads/top_25_ops_2025.csv"
+)
+
+write_csv(
+  top_25_all_stats_long,
+  "C:/Users/derek/Downloads/top_25_all_stats_2025_long.csv"
+)
+
+write_csv(
+  players_in_all_4,
+  "C:/Users/derek/Downloads/players_in_all_4_top_25_2025_wide.csv"
+)
+
+write_csv(
+  players_in_all_4_long,
+  "C:/Users/derek/Downloads/players_in_all_4_top_25_2025_long.csv"
+)
+```
+
+
